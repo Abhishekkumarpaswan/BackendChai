@@ -1,0 +1,27 @@
+{
+  "name": "backendchai",
+  "version": "1.0.0",
+  "description": "",
+  "keywords": [
+    "javascript",
+    "backend"
+  ],
+  "homepage": "https://github.com/Abhishekkumarpaswan/BackendChai#readme",
+  "bugs": {
+    "url": "https://github.com/Abhishekkumarpaswan/BackendChai/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Abhishekkumarpaswan/BackendChai.git"
+  },
+  "license": "ISC",
+  "author": "Abhishek Kumar Paswan",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "dev": "nodemon src/index.js"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
