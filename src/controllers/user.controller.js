@@ -1,7 +1,11 @@
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/ApiError.js";
 import { User } from "../models/user.model.js";
-import { uploadOnCloudinary } from "../utils/cloudinary.js";
+import {
+  uploadOnCloudinary,
+  removeFilefromCloudinary,
+  getPublicIdFromUrl,
+} from "../utils/cloudinary.js";
 import { upload } from "../middlewares/multer.middleware.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import jwt from "jsonwebtoken";
@@ -24,18 +28,7 @@ const generateAccessAndRefreshToken = async (userId) => {
 };
 
 const registerUser = asyncHandler(async (req, res) => {
-  // get user details from frontend
-  // validation - not empty
-  // check if user already exists : username,email
-  // check for images, check for avatar
-  // upload them to cloudinary, avatar
-  // create user object - create entry in db
-  // remove password and refresh token field
-  // check for user creation
-  // return response
-
   const { fullName, email, username, password } = req.body;
-  //console.log("email:", email);
 
   if (
     [fullName, email, username, password].some((field) => field?.trim() === "")
@@ -50,10 +43,8 @@ const registerUser = asyncHandler(async (req, res) => {
   if (existedUser) {
     throw new ApiError(409, "User with email or username existed");
   }
-  // console.log(req.files);
 
   const avatarLocalPath = req.files?.avatar[0]?.path;
-  // const coverImageLocalPath = req.files?.coverImage[0]?.path;
 
   let coverImageLocalPath;
   if (
@@ -98,14 +89,6 @@ const registerUser = asyncHandler(async (req, res) => {
 });
 
 const loginUser = asyncHandler(async (req, res) => {
-  // req body -> data
-  // username or email
-  // find the user
-  // password check
-  // generate access and refresh token
-  // send tokens in cookies
-  // return response
-
   const { email, username, password } = req.body;
 
   if (!username && !email) {
@@ -226,13 +209,6 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
 });
 
 const changeCurrentPassword = asyncHandler(async (req, res) => {
-  // get old password and new password from req body
-  // find the user from req.user
-  // check for old password match
-  // if not match return error
-  // if matches, update with new password
-  // return response
-
   const { oldPassword, newPassword } = req.body;
   if (!oldPassword || !newPassword) {
     throw new ApiError(400, "Old password and new password are required");
@@ -265,11 +241,6 @@ const getCurrentUser = asyncHandler(async (req, res) => {
 });
 
 const updateAccountDetails = asyncHandler(async (req, res) => {
-  // get details from req body
-  // find the user from req.user
-  // update the details
-  // return response
-
   const { fullName, email } = req.body;
 
   if (!fullName || !email) {
@@ -295,11 +266,6 @@ const updateAccountDetails = asyncHandler(async (req, res) => {
 });
 
 const updateUserAvatar = asyncHandler(async (req, res) => {
-  // get avatar from req file
-  // find the user from req.user
-  // upload avatar on cloudinary
-  // update user avatar with new url
-  // return response
   const avatarLocalPath = req.file?.path;
 
   if (!avatarLocalPath) {
@@ -311,15 +277,20 @@ const updateUserAvatar = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Error while uploading avatar");
   }
 
+  const oldAvatarPublicId = getPublicIdFromUrl(req.user?.avatar);
+  if (oldAvatarPublicId) {
+    await removeFilefromCloudinary(oldAvatarPublicId);
+  }
+
   const user = await User.findByIdAndUpdate(
     req.user?._id,
     {
-      set: {
+      $set: {
         avatar: avatar.url,
       },
     },
     {
-      new: true,
+      returnDocument: "after",
     }
   ).select("-password");
 
@@ -329,11 +300,6 @@ const updateUserAvatar = asyncHandler(async (req, res) => {
 });
 
 const updateUserCoverImage = asyncHandler(async (req, res) => {
-  // get coverImage from req file
-  // find the user from req.user
-  // upload coverImage on cloudinary
-  // update user coverImage with new url
-  // return response
   const coverImageLocalPath = req.file?.path;
 
   if (!coverImageLocalPath) {
@@ -345,21 +311,96 @@ const updateUserCoverImage = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Error while uploading cover image");
   }
 
+  const oldCoverImagePublicId = getPublicIdFromUrl(req.user?.coverImage);
+  if (oldCoverImagePublicId) {
+    await removeFilefromCloudinary(oldCoverImagePublicId);
+  }
+
   const user = await User.findByIdAndUpdate(
     req.user?._id,
     {
-      set: {
+      $set: {
         coverImage: coverImage.url,
       },
     },
     {
-      new: true,
+      returnDocument: "after",
     }
   ).select("-password");
 
   return res
     .status(200)
     .json(new ApiResponse(200, user, "User coverImage updated successfully"));
+});
+
+const getUserChannelProfile = asyncHandler(async (req, res) => {
+  const { username } = req.params;
+  if (!username?.trim()) {
+    throw new ApiError(400, "Username is required");
+  }
+
+  const channel = await User.aggregate([
+    {
+      $match: {
+        username: username.toLowerCase(),
+      },
+    },
+    {
+      $lookup: {
+        from: "subscriptions",
+        localField: "_id",
+        foreignField: "channel",
+        as: "subscribers",
+      },
+    },
+    {
+      $lookup: {
+        from: "subscriptions",
+        localField: "_id",
+        foreignField: "subscriber",
+        as: "subscribedTo",
+      },
+    },
+    {
+      $addFields: {
+        subscribersCount: {
+          $size: "$subscribers",
+        },
+        channelsSubscribedToCount: {
+          $size: "$subscribedTo",
+        },
+        isSubscribed: {
+          $cond: {
+            if: { $in: [req.user?._id, "$subscribers.subscriber"] },
+            then: true,
+            else: false,
+          },
+        },
+      },
+    },
+    {
+      $project: {
+        fullName: 1,
+        username: 1,
+        subscribersCount: 1,
+        channelsSubscribedToCount: 1,
+        isSubscribed: 1,
+        avatar: 1,
+        coverImage: 1,
+        email: 1,
+      },
+    },
+  ]);
+
+  if (!channel || channel.length === 0) {
+    throw new ApiError(404, "Channel not found");
+  }
+
+  return res
+    .status(200)
+    .json(
+      new ApiResponse(200, channel[0], "Channel profile fetched successfully")
+    );
 });
 
 export {
@@ -372,4 +413,5 @@ export {
   updateAccountDetails,
   updateUserAvatar,
   updateUserCoverImage,
+  getUserChannelProfile,
 };
